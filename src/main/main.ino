@@ -1,54 +1,108 @@
-#include <SPI.h>
-#include <MFRC522.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <ArduinoJson.h>
+#include "env.h"
 
-#define SS_PIN D4
-#define RST_PIN D3
-#define BOMBA1_PIN D2
+class Tag {
+  private:
+    String uid;
+    String bebida;
+    bool mudanca_pendente;
 
-MFRC522 rfid(SS_PIN, RST_PIN);
+  public:
+
+    Tag(String uid, String bebida) {
+      this->uid = uid;
+      this->bebida = bebida;
+      this->mudanca_pendente = false;
+    }
+
+    String getUid() {
+      return this->uid;
+    }
+
+    String getBebida() {
+      return this->bebida;
+    }
+
+    void setBebida(String bebida) {
+      this->bebida = bebida;
+    }
+
+    bool getMudancaPendente() {
+      return this->mudanca_pendente;
+    }
+
+    void setMudancaPendente(bool mudanca_pendente) {
+      this->mudanca_pendente = mudanca_pendente;
+    }
+};
+
+ESP8266WebServer server(80);
+Tag t1(String("3912fe7a"), String("coca"));
+Tag t2(String("a4c895a9"), String("suco"));
+Tag t3(String("a48c57ce"), String("agua"));
+
+void getTagInfo();
 
 void setup() {
-  // put your setup code here, to run once:
-  pinMode(BOMBA1_PIN, OUTPUT);
-  digitalWrite(BOMBA1_PIN, HIGH);
-  Serial.begin(9600);
-  SPI.begin();
-  rfid.PCD_Init();
+  
+  Serial.begin(115200);
+
+  WiFi.begin(ssid, password);
+
+  Serial.println("Conectando a rede...");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(100);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("WiFi conectado!");
+  Serial.println("IP: ");
+  Serial.println(WiFi.localIP());
+
+  server.on("/get-tag-info", HTTP_GET, getInfoTag);
+
+  server.begin();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  
+  server.handleClient();
+}
 
-  // Verifica se há uma nova tag presente
-  if (!rfid.PICC_IsNewCardPresent())
-    return;
+void getInfoTag() {
 
-  // Verifica se consegue ler o cartão
-  if (!rfid.PICC_ReadCardSerial())
-    return;
+  if (server.hasArg("uid")) {  
+    String uId = server.arg("uid"); 
+    Serial.println(uId);
 
-  Serial.println("Tag detectada!");
-  Serial.print("UID Tag: ");
+    StaticJsonDocument<200> jsonDoc;
 
-  String uidString = "";
-  for (byte i = 0; i < rfid.uid.size; i++) {
-    uidString += String(rfid.uid.uidByte[i], HEX);
+    if (uId == t1.getUid()) {
+      jsonDoc["uid"] = t1.getUid();
+      jsonDoc["bebida"] = t1.getBebida();
+    } 
+    else if (uId == t2.getUid()) {
+      jsonDoc["uid"] = t2.getUid();
+      jsonDoc["bebida"] = t2.getBebida();
+    }
+    else if (uId == t3.getUid()) {
+      jsonDoc["uid"] = t3.getUid();
+      jsonDoc["bebida"] = t3.getBebida();
+    }
+    else {
+      server.send(404, "application/json", "{\"error\":\"Tag não encontrada\"}");
+      return;
+    }
+
+    String resposta;
+    serializeJson(jsonDoc, resposta);
+    server.send(200, "application/json", resposta);
+  } 
+  else {
+    server.send(400, "application/json", "{\"error\":\"Parâmetro 'uid' não encontrado\"}");
   }
-  Serial.println(uidString);
-
-  if (uidString == "a48c57ce") {
-    Serial.println("Ativando bomba 1 ");
-    digitalWrite(BOMBA1_PIN, LOW);
-    delay(2000);
-    digitalWrite(BOMBA1_PIN, HIGH);
-  }
-
-  Serial.println("");
-
-  // Halt PICC
-  rfid.PICC_HaltA();
-
-  // Stop encryption on PCD
-  rfid.PCD_StopCrypto1();
-
 }
