@@ -3,16 +3,22 @@
 #include <ArduinoJson.h>
 #include <SPI.h>
 #include <MFRC522.h>
+#include <DHT.h>
 #include "env.h" // arquivo que contem SSID e Senha da rede
 
 #define SS_PIN D4  // D4 conecta ao pino SS do leitor RFID
 #define RST_PIN D3 // D3 conecta ao pino RST do leitor RFID
-#define INTERVALO_BOMBA 1000
+#define DHT_PIN D2 // D2 pino para leitura do DHT11
+#define DHT_TYPE DHT11 // tipo do DHT: DHT11
+#define INTERVALO_BOMBA 1000 // tempo de acionamento das bombas
+#define INTERVALO_MEDICAO_TEMP 100 // temperatura medida a cada 100ms
 #define TAMANHO_BUFFER 16 // tamanho do buffer de bytes usado para escrever na tag rfid
 
+DHT dht(DHT_PIN, DHT_TYPE);
 MFRC522 rfid(SS_PIN, RST_PIN);
 ESP8266WebServer server(80);
-float temperatura;
+float temperatura = 0;
+unsigned long temporizadorTemp;
 byte buffer[TAMANHO_BUFFER]; // buffers usado para escrever/ler dados nas tags
 bool mudancaPendente = false;
 String bebidaNova;
@@ -34,6 +40,7 @@ void inicializarChaveAutenticacao();
 void setup() {
   
   Serial.begin(115200);
+  dht.begin();
 
   WiFi.begin(ssid, password);
 
@@ -54,15 +61,23 @@ void setup() {
   inicializarChaveAutenticacao();
 
   server.on("/post-tag-info", HTTP_POST, postTagInfo); // ip:/post-tag-info?uid=3912fe7a
-  server.on("get-temperatura", HTTP_GET, getTemperatura); // ip://get-temperatura
+  server.on("/get-temperatura", HTTP_GET, getTemperatura); // ip://get-temperatura
 
   server.begin();
+
+  temporizadorTemp = millis();
 }
 
 void loop() {
 
-  // ler temperatura
-  temperatura = lerTemperatura();
+  // ler temperatura a cada 100ms
+  if (millis() - temporizadorTemp >= INTERVALO_MEDICAO_TEMP) {
+    temperatura = lerTemperatura();
+    //Serial.print("Temperatura lida: ");
+    //Serial.print(temperatura);
+    //Serial.println(" ºC");
+    temporizadorTemp = millis();
+  }
 
   // detectar níveis
   
@@ -138,7 +153,15 @@ String lerTagUid(MFRC522 rfid) {
 }
 
 float lerTemperatura() {
-  return 10.0f;
+
+  float temperaturaLida = dht.readTemperature();
+
+  // falha na leitura da temperatura
+  if (isnan(temperaturaLida)) {
+    return 0;
+  }
+
+  return temperaturaLida;
 }
 
 void alterarDadosTag(byte bloco) {
