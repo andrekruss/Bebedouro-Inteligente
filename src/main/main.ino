@@ -10,6 +10,7 @@
 #define RST_PIN D3 // D3 conecta ao pino RST do leitor RFID
 #define DHT_PIN D2 // D2 pino para leitura do DHT11
 #define DHT_TYPE DHT11 // tipo do DHT: DHT11
+#define BOIA1_PIN D1 // pino da boia 1
 #define INTERVALO_BOMBA 1000 // tempo de acionamento das bombas
 #define INTERVALO_MEDICAO_TEMP 100 // temperatura medida a cada 100ms
 #define TAMANHO_BUFFER 16 // tamanho do buffer de bytes usado para escrever na tag rfid
@@ -36,12 +37,14 @@ void alterarDadosTag(byte bloco);
 void liberarBebida(String bebida);
 String lerBebidaTag(byte bloco, MFRC522 rfid);
 void inicializarChaveAutenticacao();
+void lerNiveis();
 
 void setup() {
+
+  pinMode(BOIA1_PIN, INPUT);
   
   Serial.begin(115200);
   dht.begin();
-
   WiFi.begin(ssid, password);
 
   Serial.println("Conectando a rede...");
@@ -70,16 +73,15 @@ void setup() {
 
 void loop() {
 
-  // ler temperatura a cada 100ms
+  // ler temperatura e níveis a cada 100ms
   if (millis() - temporizadorTemp >= INTERVALO_MEDICAO_TEMP) {
     temperatura = lerTemperatura();
     //Serial.print("Temperatura lida: ");
     //Serial.print(temperatura);
     //Serial.println(" ºC");
     temporizadorTemp = millis();
+    lerNiveis();
   }
-
-  // detectar níveis
   
   server.handleClient();
 
@@ -248,4 +250,15 @@ void inicializarChaveAutenticacao() {
   for (byte i = 0; i < 6; i++) {
     chave.keyByte[i] = 0xFF;
   }
+}
+
+void lerNiveis() {
+
+  if (digitalRead(BOIA1_PIN) == HIGH) 
+    Serial.println("Boia 1 contato fechado");
+  else
+    Serial.println("Boia 1 contato aberto");
+
+  // ler nível das outras duas boias!
+
 }
