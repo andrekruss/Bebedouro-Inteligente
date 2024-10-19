@@ -1,24 +1,32 @@
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include <WiFi.h>
+#include <WebServer.h>
 #include <ArduinoJson.h>
 #include <SPI.h>
 #include <MFRC522.h>
 #include <DHT.h>
 #include "env.h" // arquivo que contem SSID e Senha da rede
 
-#define SS_PIN D4  // D4 conecta ao pino SS do leitor RFID
-#define RST_PIN D3 // D3 conecta ao pino RST do leitor RFID
-#define DHT_PIN D2 // D2 pino para leitura do DHT11
-#define DHT_TYPE DHT11 // tipo do DHT: DHT11
-#define BOIA1_PIN D1 // pino da boia 1
+#define SS_PIN 5  
+#define RST_PIN 22 
+#define DHT_PIN 27
+#define DHT_TYPE DHT11 
+#define BOIA_1_PIN 13 
+#define BOIA_2_PIN 12 
+#define BOIA_3_PIN 14 
+#define BOMBA_1_PIN 26
+#define BOMBA_2_PIN 25
+#define BOMBA_3_PIN 33
 #define INTERVALO_BOMBA 1000 // tempo de acionamento das bombas
 #define INTERVALO_MEDICAO_TEMP 100 // temperatura medida a cada 100ms
 #define TAMANHO_BUFFER 16 // tamanho do buffer de bytes usado para escrever na tag rfid
 
 DHT dht(DHT_PIN, DHT_TYPE);
 MFRC522 rfid(SS_PIN, RST_PIN);
-ESP8266WebServer server(80);
+WebServer server(80);
 float temperatura = 0;
+String nivelRecipiente1 = "";
+String nivelRecipiente2 = "";
+String nivelRecipiente3 = "";
 unsigned long temporizadorTemp;
 byte buffer[TAMANHO_BUFFER]; // buffers usado para escrever/ler dados nas tags
 bool mudancaPendente = false;
@@ -28,6 +36,7 @@ String tagUid;
 // Route Handlers
 void postTagInfo();
 void getTemperatura();
+void getNiveis();
 
 // Funções de utilidade
 MFRC522::MIFARE_Key chave;
@@ -41,7 +50,15 @@ void lerNiveis();
 
 void setup() {
 
-  pinMode(BOIA1_PIN, INPUT);
+  pinMode(BOIA_1_PIN, INPUT);
+  pinMode(BOIA_2_PIN, INPUT);
+  pinMode(BOIA_3_PIN, INPUT);
+  pinMode(BOMBA_1_PIN, OUTPUT);
+  pinMode(BOMBA_2_PIN, OUTPUT);
+  pinMode(BOMBA_3_PIN, OUTPUT);
+  digitalWrite(BOMBA_1_PIN, HIGH);
+  digitalWrite(BOMBA_2_PIN, HIGH);
+  digitalWrite(BOMBA_3_PIN, HIGH);
   
   Serial.begin(115200);
   dht.begin();
@@ -65,6 +82,7 @@ void setup() {
 
   server.on("/post-tag-info", HTTP_POST, postTagInfo); // ip:/post-tag-info?uid=3912fe7a
   server.on("/get-temperatura", HTTP_GET, getTemperatura); // ip://get-temperatura
+  server.on("/get-niveis", HTTP_GET, getNiveis);
 
   server.begin();
 
@@ -76,9 +94,9 @@ void loop() {
   // ler temperatura e níveis a cada 100ms
   if (millis() - temporizadorTemp >= INTERVALO_MEDICAO_TEMP) {
     temperatura = lerTemperatura();
-    //Serial.print("Temperatura lida: ");
-    //Serial.print(temperatura);
-    //Serial.println(" ºC");
+    // Serial.print("Temperatura lida: ");
+    // Serial.print(temperatura);
+    // Serial.println(" ºC");
     temporizadorTemp = millis();
     lerNiveis();
   }
@@ -143,6 +161,17 @@ void getTemperatura() {
   server.send(200, "application/json", resposta);
 }
 
+void getNiveis() {
+
+  StaticJsonDocument<200> jsonDoc;
+  jsonDoc["nivel1"] = nivelRecipiente1;
+  jsonDoc["nivel2"] = nivelRecipiente2;
+  jsonDoc["nivel3"] = nivelRecipiente3;
+  String resposta;
+  serializeJson(jsonDoc, resposta);
+  server.send(200, "application/json", resposta);
+}
+
 // ---------------------------- FUNÇÕES DE UTILIDADE ------------------------------------- //
 
 String lerTagUid(MFRC522 rfid) {
@@ -199,12 +228,24 @@ void liberarBebida(String bebida) {
   // bomba 2 - suco
   // bomba 3 - agua
 
-  if (bebida == "coca")
+  if (bebida == "coca"){
     Serial.println("Liberando coca...");
-  else if (bebida == "suco")
+    digitalWrite(BOMBA_1_PIN, LOW);
+    delay(1000);
+    digitalWrite(BOMBA_1_PIN, HIGH);
+  }
+  else if (bebida == "suco") {
     Serial.println("Liberando suco...");
-  else if (bebida == "agua")
+    digitalWrite(BOMBA_2_PIN, LOW);
+    delay(1000);
+    digitalWrite(BOMBA_2_PIN, HIGH);
+  }
+  else if (bebida == "agua") {
     Serial.println("Liberando agua...");
+    digitalWrite(BOMBA_3_PIN, LOW);
+    delay(1000);
+    digitalWrite(BOMBA_3_PIN, HIGH);
+  }
   else
     Serial.println("Nenhuma bebida cadastrada na tag.");
 }
@@ -254,11 +295,18 @@ void inicializarChaveAutenticacao() {
 
 void lerNiveis() {
 
-  if (digitalRead(BOIA1_PIN) == HIGH) 
-    Serial.println("Boia 1 contato fechado");
+  if (digitalRead(BOIA_1_PIN) == HIGH) 
+    nivelRecipiente1 = "baixo"; // recipiente "vazio"
   else
-    Serial.println("Boia 1 contato aberto");
+    nivelRecipiente1 = "alto"; // recipiente "cheio"
 
-  // ler nível das outras duas boias!
+  if (digitalRead(BOIA_2_PIN) == HIGH) 
+    nivelRecipiente2 = "baixo"; // recipiente "vazio"
+  else
+    nivelRecipiente2 = "alto"; // recipiente "cheio"
 
+  if (digitalRead(BOIA_3_PIN) == HIGH) 
+    nivelRecipiente3 = "baixo"; // recipiente "vazio"
+  else
+    nivelRecipiente3 = "alto"; // recipiente "cheio"
 }
