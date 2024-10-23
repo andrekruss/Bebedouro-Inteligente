@@ -64,9 +64,9 @@ void setup() {
   pinMode(BOMBA_1_PIN, OUTPUT);
   pinMode(BOMBA_2_PIN, OUTPUT);
   pinMode(BOMBA_3_PIN, OUTPUT);
-  digitalWrite(BOMBA_1_PIN, HIGH);
-  digitalWrite(BOMBA_2_PIN, HIGH);
-  digitalWrite(BOMBA_3_PIN, HIGH);
+  digitalWrite(BOMBA_1_PIN, LOW);
+  digitalWrite(BOMBA_2_PIN, LOW);
+  digitalWrite(BOMBA_3_PIN, LOW);
   
   Serial.begin(115200);
   dht.begin();
@@ -115,17 +115,17 @@ void loop() {
     if (bebidaDetectada == BEBIDA_1) {
       Serial.print("Liberando ");
       Serial.println(BEBIDA_1);
-      digitalWrite(BOMBA_1_PIN, LOW);
+      digitalWrite(BOMBA_1_PIN, HIGH);
     }
     else if (bebidaDetectada == BEBIDA_2) {
       Serial.print("Liberando ");
       Serial.println(BEBIDA_2);
-      digitalWrite(BOMBA_2_PIN, LOW);
+      digitalWrite(BOMBA_2_PIN, HIGH);
     }
     else if (bebidaDetectada == BEBIDA_3) {
       Serial.print("Liberando ");
       Serial.println(BEBIDA_3);
-      digitalWrite(BOMBA_3_PIN, LOW);
+      digitalWrite(BOMBA_3_PIN, HIGH);
     }
     Serial.println("------------------------------");
     tagDetectada = false;
@@ -134,9 +134,9 @@ void loop() {
 
   if (bombaLigada) {
     if (millis() - temporizadorBomba >= INTERVALO_BOMBA) {
-      digitalWrite(BOMBA_1_PIN, HIGH);
-      digitalWrite(BOMBA_2_PIN, HIGH);
-      digitalWrite(BOMBA_3_PIN, HIGH);
+      digitalWrite(BOMBA_1_PIN, LOW);
+      digitalWrite(BOMBA_2_PIN, LOW);
+      digitalWrite(BOMBA_3_PIN, LOW);
       bombaLigada = false;
     }
   }
