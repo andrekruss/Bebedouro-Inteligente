@@ -1,98 +1,73 @@
-#include <WiFi.h>
-#include <WebServer.h>
-#include <ArduinoJson.h>
 #include <SPI.h>
-#include <MFRC522.h>
+#include <ArduinoJson.h>
+#include <WebServer.h>
 #include <DHT.h>
-#include "env.h" // arquivo que contem SSID e Senha da rede
+#include "SensorTemperatura.h"
+#include "SensorNivel.h"
+#include "Bomba.h"
+#include "LeitorRFID.h"
+#include "TagRFID.h"
+#include "ConexaoWifi.h"
+#include "env.h"
 
-#define SS_PIN 5  
-#define RST_PIN 22 
-#define DHT_PIN 4
-#define DHT_TYPE DHT11 
-#define BOIA_1_PIN 32 
-#define BOIA_2_PIN 35
-#define BOIA_3_PIN 34 
-#define BOMBA_1_PIN 21
-#define BOMBA_2_PIN 16
-#define BOMBA_3_PIN 17
-#define INTERVALO_BOMBA 1000 // tempo de acionamento das bombas
+// constantes
+#define PINO_SS 5  
+#define PINO_RST 22 
+#define PINO_DHT 0
+#define TIPO_DHT DHT11 
+#define PINO_BOIA_1 32 
+#define PINO_BOIA_2 35
+#define PINO_BOIA_3 34 
+#define PINO_BOMBA_1 21
+#define PINO_BOMBA_2 16
+#define PINO_BOMBA_3 17
+#define PINO_LED_WIFI 15
+#define INTERVALO_ACIONAMENTO_BOMBA 1000 // tempo de acionamento das bombas
 #define INTERVALO_MEDICAO 100 // temperatura medida a cada 100ms
-#define TAMANHO_BUFFER 16 // tamanho do buffer de bytes usado para escrever na tag rfid
 
-DHT dht(DHT_PIN, DHT_TYPE);
-MFRC522 rfid(SS_PIN, RST_PIN);
-MFRC522::MIFARE_Key chave;
+// variáveis
 WebServer server(80);
-float temperatura = 0;
-String nivelRecipiente1 = "";
-String nivelRecipiente2 = "";
-String nivelRecipiente3 = "";
+SensorTemperatura sensorTemperatura(PINO_DHT, TIPO_DHT);
+SensorNivel sensorNivel1(PINO_BOIA_1);
+SensorNivel sensorNivel2(PINO_BOIA_2);
+SensorNivel sensorNivel3(PINO_BOIA_3);
+Bomba bomba1(PINO_BOMBA_1, "coca");
+Bomba bomba2(PINO_BOMBA_2, "suco");
+Bomba bomba3(PINO_BOMBA_3, "agua");
+LeitorRFID leitorRfid(PINO_SS, PINO_RST);
+TagRFID tagMudanca("", "");
+ConexaoWifi conexaoWifi(ssid, password, PINO_LED_WIFI);
 unsigned long temporizadorLeitura;
 unsigned long temporizadorBomba;
-byte buffer[TAMANHO_BUFFER]; // buffers usado para escrever/ler dados nas tags
-bool mudancaPendente = false;
-String bebidaNova;
-String tagUid;
-bool bombaLigada = false;
-bool tagDetectada = false;
-String bebidaDetectada = "";
-String uidDetectada = "";
-const String BEBIDA_1 = "coca";
-const String BEBIDA_2 = "suco";
-const String BEBIDA_3 = "agua";
 
-// Route Handlers
+// funções do servidor
 void postTagInfo();
 void getTemperatura();
 void getNiveis();
-void getDados();
 
-// Funções de utilidade
-String lerTagUid(MFRC522 rfid);
-float lerTemperatura();
-void alterarDadosTag(byte bloco);
-String lerBebidaTag(byte bloco, MFRC522 rfid);
-void inicializarChaveAutenticacao();
-void lerNiveis();
+// funções de utilidade
+void liberarBebida(String bebida);
 
 void setup() {
 
-  pinMode(BOIA_1_PIN, INPUT);
-  pinMode(BOIA_2_PIN, INPUT);
-  pinMode(BOIA_3_PIN, INPUT);
-  pinMode(BOMBA_1_PIN, OUTPUT);
-  pinMode(BOMBA_2_PIN, OUTPUT);
-  pinMode(BOMBA_3_PIN, OUTPUT);
-  digitalWrite(BOMBA_1_PIN, LOW);
-  digitalWrite(BOMBA_2_PIN, LOW);
-  digitalWrite(BOMBA_3_PIN, LOW);
-  
   Serial.begin(115200);
-  dht.begin();
-  WiFi.begin(ssid, password);
-
-  Serial.println("Conectando a rede...");
-
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(100);
-    Serial.print(".");
-  }
-
-  Serial.println();
-  Serial.println("WiFi conectado!");
-  Serial.println("IP: ");
-  Serial.println(WiFi.localIP());
-
   SPI.begin();
-  rfid.PCD_Init();
-  inicializarChaveAutenticacao();
+
+  bomba1.inicializar();
+  bomba2.inicializar();
+  bomba3.inicializar();
+  sensorNivel1.inicializar();
+  sensorNivel2.inicializar();
+  sensorNivel3.inicializar();
+  sensorTemperatura.inicializar();
+  leitorRfid.inicializar();
+
+  conexaoWifi.inicializar();
+  conexaoWifi.conectar();
 
   server.on("/post-tag-info", HTTP_POST, postTagInfo); // ip:/post-tag-info?uid=3912fe7a
   server.on("/get-temperatura", HTTP_GET, getTemperatura); // ip://get-temperatura
   server.on("/get-niveis", HTTP_GET, getNiveis);
-  server.on("/get-dados", HTTP_GET, getDados);
-
   server.begin();
 
   temporizadorLeitura = millis();
@@ -101,81 +76,52 @@ void setup() {
 
 void loop() {
 
-  // ler temperatura e níveis a cada 100ms
+  server.handleClient();
+
   if (millis() - temporizadorLeitura >= INTERVALO_MEDICAO) {
-    temperatura = lerTemperatura();
-    lerNiveis();
+    sensorTemperatura.lerTemperatura();
+    sensorNivel1.lerNivel();
+    sensorNivel2.lerNivel();
+    sensorNivel3.lerNivel();
     temporizadorLeitura = millis();
   }
 
-  server.handleClient();
+  if (leitorRfid.detectarTag() == true && bomba1.getStatus() == DESLIGADA && bomba2.getStatus() == DESLIGADA && bomba3.getStatus() == DESLIGADA) {
 
-  if (tagDetectada) {
+    String uidMudanca = tagMudanca.getUid();
 
-    if (bebidaDetectada == BEBIDA_1) {
-      Serial.print("Liberando ");
-      Serial.println(BEBIDA_1);
-      digitalWrite(BOMBA_1_PIN, HIGH);
-    }
-    else if (bebidaDetectada == BEBIDA_2) {
-      Serial.print("Liberando ");
-      Serial.println(BEBIDA_2);
-      digitalWrite(BOMBA_2_PIN, HIGH);
-    }
-    else if (bebidaDetectada == BEBIDA_3) {
-      Serial.print("Liberando ");
-      Serial.println(BEBIDA_3);
-      digitalWrite(BOMBA_3_PIN, HIGH);
-    }
-    Serial.println("------------------------------");
-    tagDetectada = false;
-    bombaLigada = true;
-  }
-
-  if (bombaLigada) {
-    if (millis() - temporizadorBomba >= INTERVALO_BOMBA) {
-      digitalWrite(BOMBA_1_PIN, LOW);
-      digitalWrite(BOMBA_2_PIN, LOW);
-      digitalWrite(BOMBA_3_PIN, LOW);
-      bombaLigada = false;
-    }
-  }
-
-  if (!tagDetectada) {
-
-    // Verifica se há uma nova tag presente
-    if (!rfid.PICC_IsNewCardPresent())
-      return;
-    // Verifica se consegue ler o cartão
-    if (!rfid.PICC_ReadCardSerial())
-      return;
-
-    tagDetectada = true;
-
-    if (mudancaPendente) {
-
-      uidDetectada = lerTagUid(rfid); 
-
-      if (tagUid == uidDetectada) {
-        alterarDadosTag(1);
-        bebidaDetectada = bebidaNova;
+    // verifica se há mudança pendente em alguma tag
+    if (uidMudanca != "") {
+      
+      // a tag utilizada no leitor é a que necessita de reescrita
+      if (leitorRfid.lerTagUid() == uidMudanca) {
+        String bebidaNova = tagMudanca.getBebida();
+        leitorRfid.alterarDadosTag(bebidaNova, 1);
+        liberarBebida(bebidaNova);
+        tagMudanca.setUid("");
+        tagMudanca.setBebida("");
       }
       else {
-        bebidaDetectada = lerBebidaTag(1, rfid);
+        liberarBebida(leitorRfid.lerBebidaTag(1));
       }
     }
     else {
-      bebidaDetectada = lerBebidaTag(1, rfid);
+      liberarBebida(leitorRfid.lerBebidaTag(1));
     }
 
     temporizadorBomba = millis();
-
-    rfid.PICC_HaltA();
-    rfid.PCD_StopCrypto1();
+    leitorRfid.encerrarLeitura();
+  }
+  else {
+    if (millis() - temporizadorBomba >= INTERVALO_ACIONAMENTO_BOMBA) {
+      bomba1.desligar();
+      bomba2.desligar();
+      bomba3.desligar();
+    }
   }
 }
 
-// ---------------------------- ROUTE HANDLERS ------------------------------------- //
+// --------------------------- HANDLERS ROTAS ----------------------------------
 
 void postTagInfo() {
 
@@ -193,9 +139,8 @@ void postTagInfo() {
     return;
   }
 
-  tagUid = server.arg("uid"); 
-  bebidaNova = doc["bebida"].as<String>();
-  mudancaPendente = true;
+  tagMudanca.setUid(server.arg("uid")); 
+  tagMudanca.setBebida(doc["bebida"].as<String>());
 
   server.send(200, "application/json", "{\"mensagem\":\"Tag alterada com sucesso\"}");
 }
@@ -203,7 +148,7 @@ void postTagInfo() {
 void getTemperatura() {
 
   StaticJsonDocument<200> jsonDoc;
-  jsonDoc["temperatura"] = temperatura;
+  jsonDoc["temperatura"] = sensorTemperatura.getTemperatura();
   String resposta;
   serializeJson(jsonDoc, resposta);
   server.send(200, "application/json", resposta);
@@ -212,134 +157,22 @@ void getTemperatura() {
 void getNiveis() {
 
   StaticJsonDocument<200> jsonDoc;
-  jsonDoc["nivel1"] = nivelRecipiente1;
-  jsonDoc["nivel2"] = nivelRecipiente2;
-  jsonDoc["nivel3"] = nivelRecipiente3;
+  jsonDoc["nivel1"] = sensorNivel1.getNivel();
+  jsonDoc["nivel2"] = sensorNivel2.getNivel();
+  jsonDoc["nivel3"] = sensorNivel3.getNivel();
   String resposta;
   serializeJson(jsonDoc, resposta);
   server.send(200, "application/json", resposta);
 }
 
-void getDados() {
+// --------------------------- FUNÇÕES DE UTILIDADE ----------------------------------
 
-  StaticJsonDocument<200> jsonDoc;
-  jsonDoc["temperatura"] = temperatura;
-  jsonDoc["nivel1"] = nivelRecipiente1;
-  jsonDoc["nivel2"] = nivelRecipiente2;
-  jsonDoc["nivel3"] = nivelRecipiente3;
-  String resposta;
-  serializeJson(jsonDoc, resposta);
-  server.send(200, "application/json", resposta);
-}
+void liberarBebida(String bebida) {
 
-// ---------------------------- FUNÇÕES DE UTILIDADE ------------------------------------- //
-
-String lerTagUid(MFRC522 rfid) {
-  String uidString = "";
-  for (byte i = 0; i < rfid.uid.size; i++) {
-    uidString += String(rfid.uid.uidByte[i], HEX);
-  }
-  Serial.println("Tag " + uidString + " detectada!");
-  return uidString;
-}
-
-float lerTemperatura() {
-
-  float temperaturaLida = dht.readTemperature();
-
-  // falha na leitura da temperatura
-  if (isnan(temperaturaLida)) {
-    return 0;
-  }
-
-  return temperaturaLida;
-}
-
-void alterarDadosTag(byte bloco) {
-  
-  // Autenticar o bloco antes de tentar gravar
-  MFRC522::StatusCode statusAutenticacao = rfid.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, bloco, &chave, &(rfid.uid));
-  if (statusAutenticacao != MFRC522::STATUS_OK) {
-    Serial.print("Erro de autenticação: ");
-    Serial.println(rfid.GetStatusCodeName(statusAutenticacao));
-    return;
-  }
-
-  // Prepara os dados para gravar (convertendo a string para um buffer de bytes)
-  bebidaNova.getBytes(buffer, TAMANHO_BUFFER);
-
-  // Gravar os dados no bloco
-  MFRC522::StatusCode statusGravacao = rfid.MIFARE_Write(bloco, buffer, TAMANHO_BUFFER);
-  if (statusGravacao == MFRC522::STATUS_OK) {
-    Serial.println("Gravação realizada com sucesso!");
-    mudancaPendente = false;
-  } else {
-    Serial.println("Erro na gravação...");
-    Serial.println(rfid.GetStatusCodeName(statusGravacao));
-  }
-
-  // Parar a criptografia após a gravação
-  rfid.PICC_HaltA();
-  rfid.PCD_StopCrypto1();
-}
-
-String lerBebidaTag(byte bloco, MFRC522 rfid) {
-
-  byte bufferLeitura[18]; // Buffer para armazenar os dados lidos
-  byte tamanhoBuffer = sizeof(bufferLeitura); // Tamanho do buffer
-
-  // autenticar
-  MFRC522::StatusCode status = rfid.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, bloco, &chave, &(rfid.uid));
-  if (status != MFRC522::STATUS_OK) {
-    Serial.print("Erro de autenticação: ");
-    Serial.println(rfid.GetStatusCodeName(status));
-    return "";
-  }
-
-  // Ler o bloco
-  status = rfid.MIFARE_Read(bloco, bufferLeitura, &tamanhoBuffer);
-  if (status != MFRC522::STATUS_OK) {
-    Serial.print("Erro de leitura: ");
-    Serial.println(rfid.GetStatusCodeName(status));
-    return "";
-  }
-
-  String bebidaLida = "";
-  for (byte i = 0; i < 16; i++) {
-    // Adiciona cada byte como caractere à string (desde que não seja 0)
-    if (bufferLeitura[i] != 0) {
-      bebidaLida += (char)bufferLeitura[i];
-    }
-  }
-
-  Serial.print("Bebida lida:" );
-  Serial.println(bebidaLida);
-
-  return bebidaLida;
-}
-
-void inicializarChaveAutenticacao() {
-  
-  // Chave padrão para MIFARE Classic é geralmente 0xFF
-  for (byte i = 0; i < 6; i++) {
-    chave.keyByte[i] = 0xFF;
-  }
-}
-
-void lerNiveis() {
-
-  if (digitalRead(BOIA_1_PIN) == HIGH) 
-    nivelRecipiente1 = "baixo"; // recipiente "vazio"
-  else
-    nivelRecipiente1 = "alto"; // recipiente "cheio"
-
-  if (digitalRead(BOIA_2_PIN) == HIGH) 
-    nivelRecipiente2 = "baixo"; // recipiente "vazio"
-  else
-    nivelRecipiente2 = "alto"; // recipiente "cheio"
-
-  if (digitalRead(BOIA_3_PIN) == HIGH) 
-    nivelRecipiente3 = "baixo"; // recipiente "vazio"
-  else
-    nivelRecipiente3 = "alto"; // recipiente "cheio"
+  if (bebida == bomba1.getBebida())
+    bomba1.acionar();
+  else if (bebida == bomba2.getBebida())
+    bomba2.acionar();
+  else if (bebida == bomba3.getBebida())
+    bomba3.acionar();
 }
