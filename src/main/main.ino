@@ -2,6 +2,7 @@
 #include <ArduinoJson.h>
 #include <WebServer.h>
 #include <DHT.h>
+#include <WiFi.h>
 #include "SensorTemperatura.h"
 #include "SensorNivel.h"
 #include "Bomba.h"
@@ -13,16 +14,16 @@
 // constantes
 #define PINO_SS 5  
 #define PINO_RST 22 
-#define PINO_DHT 0
+#define PINO_DHT 4
 #define TIPO_DHT DHT11 
 #define PINO_BOIA_1 32 
 #define PINO_BOIA_2 35
 #define PINO_BOIA_3 34 
-#define PINO_BOMBA_1 21
-#define PINO_BOMBA_2 16
-#define PINO_BOMBA_3 17
-#define PINO_LED_WIFI 15
-#define INTERVALO_ACIONAMENTO_BOMBA 1000 // tempo de acionamento das bombas
+#define PINO_BOMBA_1 25
+#define PINO_BOMBA_2 26
+#define PINO_BOMBA_3 27
+#define PINO_LED_WIFI 21
+#define INTERVALO_ACIONAMENTO_BOMBA 7000 // tempo de acionamento das bombas
 #define INTERVALO_MEDICAO 100 // temperatura medida a cada 100ms
 
 // variáveis
@@ -36,7 +37,10 @@ Bomba bomba2(PINO_BOMBA_2, "suco");
 Bomba bomba3(PINO_BOMBA_3, "agua");
 LeitorRFID leitorRfid(PINO_SS, PINO_RST);
 TagRFID tagMudanca("", "");
-ConexaoWifi conexaoWifi(ssid, password, PINO_LED_WIFI);
+IPAddress ip(192, 168, 18, 170);  // IP que você deseja usar
+IPAddress gateway(192, 168, 18, 1); // Geralmente o IP do seu roteador
+IPAddress subnet(255, 255, 255, 0); // Máscara de sub-rede
+ConexaoWifi conexaoWifi(ssid, password, PINO_LED_WIFI, ip, gateway, subnet);
 unsigned long temporizadorLeitura;
 unsigned long temporizadorBomba;
 
@@ -64,6 +68,7 @@ void setup() {
 
   conexaoWifi.inicializar();
   conexaoWifi.conectar();
+  conexaoWifi.imprimirIP();
 
   server.on("/post-tag-info", HTTP_POST, postTagInfo); // ip:/post-tag-info?uid=3912fe7a
   server.on("/get-temperatura", HTTP_GET, getTemperatura); // ip://get-temperatura
@@ -112,7 +117,7 @@ void loop() {
     temporizadorBomba = millis();
     leitorRfid.encerrarLeitura();
   }
-  else {
+  else if (bomba1.getStatus() == LIGADA || bomba2.getStatus() == LIGADA || bomba3.getStatus() == LIGADA) {
     if (millis() - temporizadorBomba >= INTERVALO_ACIONAMENTO_BOMBA) {
       bomba1.desligar();
       bomba2.desligar();
